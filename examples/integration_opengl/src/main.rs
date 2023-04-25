@@ -2,6 +2,7 @@ mod controls;
 mod scene;
 
 use controls::Controls;
+use iced_glutin::ime::IME;
 use scene::Scene;
 
 use glow::*;
@@ -75,6 +76,7 @@ pub fn main() {
 
     let scene = Scene::new(&gl, shader_version);
 
+    let ime = IME::new();
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
@@ -130,12 +132,14 @@ pub fn main() {
                             text_color: Color::WHITE,
                         },
                         &mut clipboard,
+                        &ime,
                         &mut debug,
                     );
 
                     // and request a redraw
                     windowed_context.window().request_redraw();
                 }
+                ime.apply_request(windowed_context.window());
             }
             Event::RedrawRequested(_) => {
                 if resized {

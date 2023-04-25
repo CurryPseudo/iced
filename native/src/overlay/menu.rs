@@ -1,5 +1,4 @@
 //! Build and show dropdown menus.
-use crate::alignment;
 use crate::event::{self, Event};
 use crate::layout;
 use crate::mouse;
@@ -8,14 +7,17 @@ use crate::renderer;
 use crate::text::{self, Text};
 use crate::touch;
 use crate::widget::container::{self, Container};
-use crate::widget::scrollable::{self, Scrollable};
-use crate::widget::Tree;
+use crate::widget::scrollable;
+use crate::widget::tree::Tree;
+use crate::{alignment, IME};
+
 use crate::{
     Clipboard, Color, Element, Layout, Length, Padding, Pixels, Point,
     Rectangle, Shell, Size, Vector, Widget,
 };
 
 pub use iced_style::menu::{Appearance, StyleSheet};
+use scrollable::Scrollable;
 
 /// A list of selectable options.
 #[allow(missing_debug_implementations)]
@@ -239,6 +241,7 @@ where
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
+        ime: &dyn IME,
         shell: &mut Shell<'_, Message>,
     ) -> event::Status {
         self.container.on_event(
@@ -248,6 +251,7 @@ where
             cursor_position,
             renderer,
             clipboard,
+            ime,
             shell,
         )
     }
@@ -362,6 +366,7 @@ where
         cursor_position: Point,
         renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
+        _: &dyn IME,
         _shell: &mut Shell<'_, Message>,
     ) -> event::Status {
         match event {

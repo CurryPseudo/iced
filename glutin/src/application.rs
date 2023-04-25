@@ -10,6 +10,7 @@ use iced_winit::application;
 use iced_winit::conversion;
 use iced_winit::futures;
 use iced_winit::futures::channel::mpsc;
+use iced_winit::ime::IME;
 use iced_winit::renderer;
 use iced_winit::time::Instant;
 use iced_winit::user_interface;
@@ -158,7 +159,6 @@ where
     });
 
     let mut context = task::Context::from_waker(task::noop_waker_ref());
-
     let _ = event_loop.run_return(move |event, _, control_flow| {
         use glutin::event_loop::ControlFlow;
 
@@ -225,7 +225,7 @@ async fn run_instance<A, E, C>(
     use glutin::event;
     use glutin::event_loop::ControlFlow;
     use iced_winit::futures::stream::StreamExt;
-
+    let ime = IME::new();
     let mut clipboard = Clipboard::connect(context.window());
     let mut cache = user_interface::Cache::default();
     let mut state = application::State::new(&application, context.window());
@@ -241,6 +241,7 @@ async fn run_instance<A, E, C>(
         &mut runtime,
         &mut clipboard,
         &mut should_exit,
+        &ime,
         &mut proxy,
         &mut debug,
         context.window(),
@@ -286,6 +287,7 @@ async fn run_instance<A, E, C>(
                     state.cursor_position(),
                     &mut renderer,
                     &mut clipboard,
+                    &ime,
                     &mut messages,
                 );
 
@@ -313,6 +315,7 @@ async fn run_instance<A, E, C>(
                         &mut runtime,
                         &mut clipboard,
                         &mut should_exit,
+                        &ime,
                         &mut proxy,
                         &mut debug,
                         &mut messages,
@@ -351,6 +354,7 @@ async fn run_instance<A, E, C>(
                     state.cursor_position(),
                     &mut renderer,
                     &mut clipboard,
+                    &ime,
                     &mut messages,
                 );
 
@@ -372,7 +376,7 @@ async fn run_instance<A, E, C>(
 
                     mouse_interaction = new_mouse_interaction;
                 }
-
+                ime.apply_request(context.window());
                 context.window().request_redraw();
                 runtime
                     .broadcast((redraw_event, crate::event::Status::Ignored));

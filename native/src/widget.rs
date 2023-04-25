@@ -95,7 +95,7 @@ use crate::layout;
 use crate::mouse;
 use crate::overlay;
 use crate::renderer;
-use crate::{Clipboard, Layout, Length, Point, Rectangle, Shell};
+use crate::{Clipboard, Layout, Length, Point, Rectangle, Shell, IME};
 
 /// A component that displays information and allows interaction.
 ///
@@ -194,6 +194,7 @@ where
         _cursor_position: Point,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
+        _ime: &dyn IME,
         _shell: &mut Shell<'_, Message>,
     ) -> event::Status {
         event::Status::Ignored

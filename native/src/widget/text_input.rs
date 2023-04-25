@@ -1,17 +1,16 @@
 //! Display fields that can be filled with text.
 //!
 //! A [`TextInput`] has some local [`State`].
-mod editor;
-mod value;
-
 pub mod cursor;
+mod editor;
+mod ime_state;
+mod value;
 
 pub use cursor::Cursor;
 pub use value::Value;
 
 use editor::Editor;
 
-use crate::alignment;
 use crate::event::{self, Event};
 use crate::keyboard;
 use crate::layout;
@@ -24,13 +23,14 @@ use crate::widget;
 use crate::widget::operation::{self, Operation};
 use crate::widget::tree::{self, Tree};
 use crate::window;
+use crate::{alignment, IME};
 use crate::{
     Clipboard, Color, Command, Element, Layout, Length, Padding, Pixels, Point,
     Rectangle, Shell, Size, Vector, Widget,
 };
-
 pub use iced_style::text_input::{Appearance, StyleSheet};
 
+use self::ime_state::IMEState;
 /// A field that can be filled with text.
 ///
 /// # Example
@@ -285,6 +285,7 @@ where
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
+        ime: &dyn IME,
         shell: &mut Shell<'_, Message>,
     ) -> event::Status {
         update(
@@ -293,6 +294,7 @@ where
             cursor_position,
             renderer,
             clipboard,
+            ime,
             shell,
             &mut self.value,
             self.size,
@@ -509,6 +511,7 @@ pub fn update<'a, Message, Renderer>(
     cursor_position: Point,
     renderer: &Renderer,
     clipboard: &mut dyn Clipboard,
+    ime: &dyn IME,
     shell: &mut Shell<'_, Message>,
     value: &mut Value,
     size: Option<f32>,
@@ -523,13 +526,22 @@ where
     Message: Clone,
     Renderer: text::Renderer,
 {
+    let state = state();
+    if state.is_focused.is_some() {
+        if is_secure {
+            ime.password_mode();
+        } else {
+            ime.inside();
+        }
+    }
     match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
         | Event::Touch(touch::Event::FingerPressed { .. }) => {
-            let state = state();
             let is_clicked =
                 layout.bounds().contains(cursor_position) && on_input.is_some();
-
+            // if gain focus enable ime
+            let focus_gained = state.is_focused.is_none() && is_clicked;
+            let focus_lost = state.is_focused.is_some() && !is_clicked;
             state.is_focused = if is_clicked {
                 state.is_focused.or_else(|| {
                     let now = Instant::now();
@@ -542,9 +554,9 @@ where
             } else {
                 None
             };
-
             if is_clicked {
                 let text_layout = layout.children().next().unwrap();
+                let text_bounds = text_layout.bounds();
                 let target = cursor_position.x - text_layout.bounds().x;
 
                 let click =
@@ -597,7 +609,6 @@ where
                                 target,
                             )
                             .unwrap_or(0);
-
                             state.cursor.select_range(
                                 value.previous_start_of_word(position),
                                 value.next_end_of_word(position),
@@ -613,19 +624,51 @@ where
                 }
 
                 state.last_click = Some(click);
+                if !is_secure && focus_gained {
+                    let position = state.cursor.start(value);
 
-                return event::Status::Captured;
+                    // calcurate where we need to place candidate window.
+                    let size = size.unwrap_or_else(|| renderer.default_size());
+
+                    let position = measure_cursor_and_scroll_offset(
+                        renderer,
+                        text_bounds,
+                        value,
+                        size,
+                        position,
+                        font.clone(),
+                    );
+                    let position = (
+                        (text_bounds.x + position.0) as i32,
+                        (text_bounds.y) as i32 + size as i32,
+                    );
+
+                    ime.set_ime_position(position.0, position.1);
+                }
+            } else if focus_lost {
+                let mut editor = Editor::new(value, &mut state.cursor);
+                ime.outside();
+                if let Some((old_ime_state, on_input)) =
+                    state.ime_state.take().zip(on_input)
+                {
+                    old_ime_state
+                        .preedit_text()
+                        .chars()
+                        .for_each(|ch| editor.insert(ch));
+                    let message = (on_input)(editor.contents());
+                    shell.publish(message);
+                }
             }
+
+            return event::Status::Captured;
         }
         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
         | Event::Touch(touch::Event::FingerLifted { .. })
         | Event::Touch(touch::Event::FingerLost { .. }) => {
-            state().is_dragging = false;
+            state.is_dragging = false;
         }
         Event::Mouse(mouse::Event::CursorMoved { position })
         | Event::Touch(touch::Event::FingerMoved { position, .. }) => {
-            let state = state();
-
             if state.is_dragging {
                 let text_layout = layout.children().next().unwrap();
                 let target = position.x - text_layout.bounds().x;
@@ -655,8 +698,6 @@ where
             }
         }
         Event::Keyboard(keyboard::Event::CharacterReceived(c)) => {
-            let state = state();
-
             if let Some(focus) = &mut state.is_focused {
                 let Some(on_input) = on_input else { return event::Status::Ignored };
 
@@ -678,8 +719,6 @@ where
             }
         }
         Event::Keyboard(keyboard::Event::KeyPressed { key_code, .. }) => {
-            let state = state();
-
             if let Some(focus) = &mut state.is_focused {
                 let Some(on_input) = on_input else { return event::Status::Ignored };
 
@@ -864,8 +903,6 @@ where
             }
         }
         Event::Keyboard(keyboard::Event::KeyReleased { key_code, .. }) => {
-            let state = state();
-
             if state.is_focused.is_some() {
                 match key_code {
                     keyboard::KeyCode::V => {
@@ -885,13 +922,9 @@ where
             }
         }
         Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
-            let state = state();
-
             state.keyboard_modifiers = modifiers;
         }
         Event::Window(window::Event::RedrawRequested(now)) => {
-            let state = state();
-
             if let Some(focus) = &mut state.is_focused {
                 focus.now = now;
 
@@ -903,6 +936,92 @@ where
                     now + Duration::from_millis(millis_until_redraw as u64),
                 ));
             }
+        }
+        Event::Keyboard(keyboard::Event::IMECommit(text)) => {
+            if let Some(on_input) = (state.is_pasting.is_none()
+                && !state.keyboard_modifiers.command()
+                && !is_secure
+                && state.is_focused.is_some()
+                && state.ime_state.is_some())
+            .then(|| on_input)
+            .flatten()
+            {
+                let mut editor = Editor::new(value, &mut state.cursor);
+
+                for ch in text.chars() {
+                    editor.insert(ch);
+                }
+
+                let message = (on_input)(editor.contents());
+                shell.publish(message);
+                #[cfg(target_os = "macos")]
+                {
+                    let text_bounds =
+                        layout.children().next().unwrap().bounds();
+                    let size = size.unwrap_or_else(|| renderer.default_size());
+
+                    let width = renderer.measure_width(
+                        &editor.contents(),
+                        size,
+                        font.clone(),
+                    );
+                    let (x, y) = (
+                        (text_bounds.x + width) as i32,
+                        (text_bounds.y) as i32 + size as i32,
+                    );
+                    ime.set_ime_position_with_reenable(x, y);
+                }
+                state.ime_state = None;
+                return event::Status::Captured;
+            }
+        }
+
+        Event::Keyboard(keyboard::Event::IMEEnabled) => {
+            if state.is_focused.is_some() {
+                let _ = state.ime_state.replace(IMEState::default());
+                return event::Status::Captured;
+            }
+        }
+        Event::Keyboard(keyboard::Event::IMEPreedit(text, range)) => {
+            if state.is_focused.is_none() || is_secure {
+                return event::Status::Ignored;
+            }
+            // calcurate where we need to place candidate window.
+            let text_bounds = layout.children().next().unwrap().bounds();
+            let size = size.unwrap_or_else(|| renderer.default_size());
+
+            let chars_from_left = state.cursor.start(value);
+
+            let before_preedit_text = value
+                .to_string()
+                .chars()
+                .take(chars_from_left)
+                .fold(String::new(), |mut buffer, ch| {
+                    buffer.push(ch);
+                    buffer
+                });
+
+            let position = renderer.measure_width(
+                &(before_preedit_text + &text),
+                size,
+                font.clone(),
+            );
+
+            if let Some(ime_state) = state.ime_state.as_mut() {
+                ime_state.set_event(text, range);
+            } else {
+                let mut new_state = IMEState::default();
+                new_state.set_event(text, range);
+                let _ = state.ime_state.replace(new_state);
+            }
+
+            let position = (
+                (text_bounds.x + position) as i32,
+                (text_bounds.y) as i32 + size as i32,
+            );
+            ime.set_ime_position(position.0, position.1);
+
+            return event::Status::Captured;
         }
         _ => {}
     }
@@ -982,16 +1101,69 @@ pub fn draw<Renderer>(
     let text = value.to_string();
     let size = size.unwrap_or_else(|| renderer.default_size());
 
+    let color = if text.is_empty()
+        && state
+            .ime_state
+            .as_ref()
+            .map_or(true, |state| state.preedit_text().is_empty())
+    {
+        theme.placeholder_color(style)
+    } else if is_disabled {
+        theme.disabled_color(style)
+    } else {
+        theme.value_color(style)
+    };
+
+    let (render_text, before_preedit_text) = if let Some(ime_state) =
+        state.ime_state.as_ref()
+    {
+        let mut text = text;
+        let chars_from_left = state.cursor.start(value);
+        let before_preedit_text = text.chars().take(chars_from_left).fold(
+            String::new(),
+            |mut buffer, ch| {
+                buffer.push(ch);
+                buffer
+            },
+        );
+
+        text.insert_str(before_preedit_text.len(), ime_state.preedit_text());
+
+        (text, before_preedit_text)
+    } else if text.is_empty() {
+        (placeholder.to_owned(), String::new())
+    } else {
+        (text.clone(), String::new())
+    };
+    // display preedit text and exist text concated.
+    // cursor position need to concated also.
+
+    let (preedit_cursor_index, preedit_value) =
+        if let Some(ime_state) = state.ime_state.as_ref() {
+            (
+                ime_state.before_cursor_text().chars().count(),
+                Value::new(ime_state.preedit_text()),
+            )
+        } else {
+            (0, Value::new(""))
+        };
+
+    let mut value = value.clone();
+
+    value.insert_many(state.cursor.start(&value), preedit_value);
+
+    let text_width = renderer.measure_width(&render_text, size, font.clone());
+
     let (cursor, offset) = if let Some(focus) = &state.is_focused {
-        match state.cursor.state(value) {
+        match state.cursor.state(&value) {
             cursor::State::Index(position) => {
                 let (text_value_width, offset) =
                     measure_cursor_and_scroll_offset(
                         renderer,
                         text_bounds,
-                        value,
+                        &value,
                         size,
-                        position,
+                        position + preedit_cursor_index,
                         font.clone(),
                     );
 
@@ -1030,9 +1202,9 @@ pub fn draw<Renderer>(
                     measure_cursor_and_scroll_offset(
                         renderer,
                         text_bounds,
-                        value,
+                        &value,
                         size,
-                        left,
+                        left + preedit_cursor_index,
                         font.clone(),
                     );
 
@@ -1040,9 +1212,9 @@ pub fn draw<Renderer>(
                     measure_cursor_and_scroll_offset(
                         renderer,
                         text_bounds,
-                        value,
+                        &value,
                         size,
-                        right,
+                        right + preedit_cursor_index,
                         font.clone(),
                     );
 
@@ -1075,26 +1247,12 @@ pub fn draw<Renderer>(
         (None, 0.0)
     };
 
-    let text_width = renderer.measure_width(
-        if text.is_empty() { placeholder } else { &text },
-        size,
-        font.clone(),
-    );
-
     let render = |renderer: &mut Renderer| {
-        if let Some((cursor, color)) = cursor {
-            renderer.fill_quad(cursor, color);
-        }
+        // ime mode should not paint selection.
 
-        renderer.fill_text(Text {
-            content: if text.is_empty() { placeholder } else { &text },
-            color: if text.is_empty() {
-                theme.placeholder_color(style)
-            } else if is_disabled {
-                theme.disabled_color(style)
-            } else {
-                theme.value_color(style)
-            },
+        let fill_text = Text {
+            content: &render_text,
+            color,
             font: font.clone(),
             bounds: Rectangle {
                 y: text_bounds.center_y(),
@@ -1104,7 +1262,53 @@ pub fn draw<Renderer>(
             size,
             horizontal_alignment: alignment::Horizontal::Left,
             vertical_alignment: alignment::Vertical::Center,
-        });
+        };
+
+        if let Some(ime_state) = state.ime_state.as_ref() {
+            // draw under line.
+
+            let before_preedit_text_width = renderer.measure_width(
+                &before_preedit_text,
+                size,
+                font.clone(),
+            );
+
+            let splits = ime_state.split_to_pieces();
+
+            let _ = splits.iter().enumerate().fold(
+                text_bounds.x + before_preedit_text_width,
+                |offset, (idx, t)| {
+                    if let Some(t) = t {
+                        let width =
+                            renderer.measure_width(t, size, font.clone());
+                        let quad = renderer::Quad {
+                            bounds: Rectangle {
+                                x: offset,
+                                y: if idx == 1 {
+                                    text_bounds.y + size - 2.0
+                                } else {
+                                    text_bounds.y + size
+                                },
+                                width,
+                                height: if idx == 1 { 3.0 } else { 1.0 },
+                            },
+                            border_radius: 0.0.into(),
+                            border_width: 0.0,
+                            border_color: Color::default(),
+                        };
+                        renderer.fill_quad(quad, theme.value_color(style));
+                        width + offset
+                    } else {
+                        offset
+                    }
+                },
+            );
+        }
+
+        if let Some((cursor, color)) = cursor {
+            renderer.fill_quad(cursor, color);
+        }
+        renderer.fill_text(fill_text);
     };
 
     if text_width > text_bounds.width {
@@ -1142,6 +1346,7 @@ pub struct State {
     last_click: Option<mouse::Click>,
     cursor: Cursor,
     keyboard_modifiers: keyboard::Modifiers,
+    ime_state: Option<IMEState>,
     // TODO: Add stateful horizontal scrolling offset
 }
 
@@ -1166,6 +1371,7 @@ impl State {
             last_click: None,
             cursor: Cursor::default(),
             keyboard_modifiers: keyboard::Modifiers::default(),
+            ime_state: None,
         }
     }
 

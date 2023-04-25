@@ -6,8 +6,8 @@ use scene::Scene;
 
 use iced_wgpu::{wgpu, Backend, Renderer, Settings, Viewport};
 use iced_winit::{
-    conversion, futures, program, renderer, winit, Clipboard, Color, Debug,
-    Size,
+    conversion, futures, ime::IME, program, renderer, winit, Clipboard, Color,
+    Debug, Size,
 };
 
 use winit::{
@@ -149,12 +149,13 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut renderer,
         &mut debug,
     );
-
+    let ime = IME::new();
     // Run event loop
     event_loop.run(move |event, _, control_flow| {
         // You should change this if you want to render continuosly
         *control_flow = ControlFlow::Wait;
 
+        ime.set_ime_allowed(true);
         match event {
             Event::WindowEvent { event, .. } => {
                 match event {
@@ -196,12 +197,14 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &iced_wgpu::Theme::Dark,
                         &renderer::Style { text_color: Color::WHITE },
                         &mut clipboard,
+                        & ime,
                         &mut debug,
                     );
 
                     // and request a redraw
                     window.request_redraw();
                 }
+                ime.apply_request(&window);
             }
             Event::RedrawRequested(_) => {
                 if resized {

@@ -1,10 +1,10 @@
-use iced_native::event;
 use iced_native::layout::{self, Layout};
 use iced_native::mouse;
 use iced_native::overlay;
 use iced_native::renderer;
 use iced_native::widget::tree::{self, Tree};
 use iced_native::widget::{self, horizontal_space};
+use iced_native::{event, IME};
 use iced_native::{
     Clipboard, Element, Length, Point, Rectangle, Shell, Size, Widget,
 };
@@ -178,6 +178,7 @@ where
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
+        ime: &dyn IME,
         shell: &mut Shell<'_, Message>,
     ) -> event::Status {
         let state = tree.state.downcast_mut::<State>();
@@ -199,6 +200,7 @@ where
                     cursor_position,
                     renderer,
                     clipboard,
+                    ime,
                     &mut local_shell,
                 )
             },
@@ -413,6 +415,7 @@ where
         cursor_position: Point,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
+        ime: &dyn IME,
         shell: &mut Shell<'_, Message>,
     ) -> event::Status {
         self.with_overlay_mut_maybe(|overlay| {
@@ -422,6 +425,7 @@ where
                 cursor_position,
                 renderer,
                 clipboard,
+                ime,
                 shell,
             )
         })
