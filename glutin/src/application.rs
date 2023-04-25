@@ -38,6 +38,8 @@ where
     use futures::Future;
     use glutin::event_loop::EventLoopBuilder;
     use glutin::platform::run_return::EventLoopExtRunReturn;
+    #[cfg(target_os = "windows")]
+    use glutin::platform::windows::EventLoopBuilderExtWindows;
     use glutin::ContextBuilder;
 
     #[cfg(feature = "trace")]
@@ -49,7 +51,13 @@ where
     #[cfg(feature = "tracing")]
     let _ = info_span!("Application::Glutin", "RUN").entered();
 
-    let mut event_loop = EventLoopBuilder::with_user_event().build();
+    let mut builder = EventLoopBuilder::with_user_event();
+
+    #[cfg(target_os = "windows")]
+    let builder = builder.with_any_thread(true);
+
+    let mut event_loop = builder.build();
+
     let proxy = event_loop.create_proxy();
 
     let runtime = {
