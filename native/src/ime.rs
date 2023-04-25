@@ -58,7 +58,7 @@ impl IME for Null {
 
     fn unlock_set_ime_allowed(&self) {}
     #[cfg(target_os = "macos")]
-    fn set_ime_position_with_reenable(&self, x: i32, y: i32) {}
+    fn set_ime_position_with_reenable(&self, _x: i32, _y: i32) {}
 }
 
 /// A IME action to be performed by some [`Command`].
